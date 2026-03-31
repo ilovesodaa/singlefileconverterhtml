@@ -28,11 +28,13 @@ A powerful, 100% offline HTML file converter that works without an internet conn
 ### 🎥 Video Conversion
 - **Supported Inputs:** MP4, WebM, AVI, MOV, MKV, FLV, WMV, OGV
 - **Output Formats:** MP4, WebM
+- **Audio Extraction:** MP3, WAV, OGG (extract audio from video)
 - **Features:** Adjustable video/audio bitrate, preserves quality
 
 ### 🎵 Audio Conversion
 - **Supported Inputs:** MP3, WAV, OGG, AAC, FLAC, M4A, WMA, OPUS
 - **Output Formats:** MP3, WAV, OGG
+- **Video Creation:** MP4, WebM (create video with visualization)
 - **Features:** Bitrate control, high-quality conversion
 
 ### 🖼️ Image Conversion
@@ -77,6 +79,17 @@ All processing happens in your browser's memory - nothing is uploaded or sent an
 - Video bitrate of 2500 kbps is a good balance for HD content
 - WebM format typically produces smaller files than MP4
 - Processing may take time for large videos
+
+### Audio Extraction from Video
+- Extract high-quality audio tracks from video files
+- Choose from MP3, WAV, or OGG formats
+- Preserves original audio quality based on bitrate setting
+
+### Audio to Video Conversion
+- Converts audio files into video format with a visual background
+- Creates a 720p video with gradient background and audio info
+- Perfect for uploading audio to video platforms
+- Maintains audio quality while adding visual component
 
 ### Text Conversion
 - CSV to JSON conversion assumes first row contains headers
@@ -150,13 +163,15 @@ This project is open source and available for anyone to use, modify, and distrib
 ## 🎯 Use Cases
 
 - Convert videos for different platforms
-- Extract audio from video files
+- **Extract audio from video files** (video → audio)
+- **Create videos from audio files** (audio → video)
 - Convert images for web optimization
 - Transform data between CSV and JSON
 - Encode/decode Base64 data
 - Quick format conversions without online tools
 - Work offline in areas without internet
 - Process sensitive files without uploading them
+- Prepare audio for video platforms by adding visualization
 
 ---
 
