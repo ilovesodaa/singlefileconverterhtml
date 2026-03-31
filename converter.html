@@ -400,6 +400,7 @@
                         • MP4 ↔ WebM<br>
                         • AVI → MP4/WebM<br>
                         • MOV → MP4/WebM<br>
+                        • Extract audio (browser-supported formats)<br>
                         • Browser-supported codecs
                     </div>
                 </div>
@@ -409,7 +410,8 @@
                         • MP3 ↔ WAV ↔ OGG<br>
                         • AAC → MP3/WAV<br>
                         • FLAC → WAV<br>
-                        • WebM audio extract
+                        • Create video with visualization<br>
+                        • Browser-supported audio extract
                     </div>
                 </div>
                 <div class="format-card">
@@ -558,6 +560,8 @@
             outputFormatSelect.innerHTML = '<option value="">Select format...</option>';
 
             const config = formatMappings[fileType];
+
+            // Add same-type format conversions
             config.outputs.forEach(format => {
                 if (format !== currentExt) { // Don't show current format
                     const option = document.createElement('option');
@@ -567,11 +571,38 @@
                 }
             });
 
+            // Add cross-type conversions
+            if (fileType === 'video') {
+                // Add audio extraction option for videos
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = 'Extract Audio';
+                formatMappings.audio.outputs.forEach(format => {
+                    const option = document.createElement('option');
+                    option.value = format;
+                    option.textContent = `${format.toUpperCase()} (audio only)`;
+                    option.dataset.crossConversion = 'video-to-audio';
+                    optgroup.appendChild(option);
+                });
+                outputFormatSelect.appendChild(optgroup);
+            } else if (fileType === 'audio') {
+                // Add video creation option for audio
+                const optgroup = document.createElement('optgroup');
+                optgroup.label = 'Create Video';
+                formatMappings.video.outputs.forEach(format => {
+                    const option = document.createElement('option');
+                    option.value = format;
+                    option.textContent = `${format.toUpperCase()} (with visualization)`;
+                    option.dataset.crossConversion = 'audio-to-video';
+                    optgroup.appendChild(option);
+                });
+                outputFormatSelect.appendChild(optgroup);
+            }
+
             // Show/hide options based on file type
             document.getElementById('qualityOption').style.display =
                 (fileType === 'image') ? 'block' : 'none';
             document.getElementById('videoOptions').style.display =
-                (fileType === 'video') ? 'block' : 'none';
+                (fileType === 'video' || fileType === 'audio') ? 'block' : 'none';
             document.getElementById('audioBitrateOption').style.display =
                 (fileType === 'audio' || fileType === 'video') ? 'block' : 'none';
 
@@ -605,21 +636,32 @@
             updateProgress(0, 'Starting conversion...');
 
             try {
-                switch (fileType) {
-                    case 'video':
-                        await convertVideo(currentFile, outputFormat);
-                        break;
-                    case 'audio':
-                        await convertAudio(currentFile, outputFormat);
-                        break;
-                    case 'image':
-                        await convertImage(currentFile, outputFormat);
-                        break;
-                    case 'text':
-                        await convertText(currentFile, outputFormat);
-                        break;
-                    default:
-                        throw new Error('Unsupported file type');
+                // Determine if this is a cross-type conversion
+                const selectedOption = document.querySelector('#outputFormat option:checked');
+                const crossConversion = selectedOption?.dataset?.crossConversion;
+
+                if (crossConversion === 'video-to-audio') {
+                    await convertVideoToAudio(currentFile, outputFormat);
+                } else if (crossConversion === 'audio-to-video') {
+                    await convertAudioToVideo(currentFile, outputFormat);
+                } else {
+                    // Standard same-type conversion
+                    switch (fileType) {
+                        case 'video':
+                            await convertVideo(currentFile, outputFormat);
+                            break;
+                        case 'audio':
+                            await convertAudio(currentFile, outputFormat);
+                            break;
+                        case 'image':
+                            await convertImage(currentFile, outputFormat);
+                            break;
+                        case 'text':
+                            await convertText(currentFile, outputFormat);
+                            break;
+                        default:
+                            throw new Error('Unsupported file type');
+                    }
                 }
             } catch (error) {
                 showError('Conversion failed: ' + error.message);
@@ -697,6 +739,97 @@
             };
         }
 
+        async function convertVideoToAudio(file, outputFormat) {
+            updateProgress(20, 'Loading video...');
+
+            const objectUrl = URL.createObjectURL(file);
+            const video = document.createElement('video');
+            video.src = objectUrl;
+
+            let audioContext = null;
+            let source = null;
+            let dest = null;
+
+            try {
+                await new Promise((resolve, reject) => {
+                    video.onloadedmetadata = resolve;
+                    video.onerror = () => reject(new Error('Failed to load video'));
+                });
+
+                updateProgress(40, 'Extracting audio...');
+
+                audioContext = new AudioContext();
+                source = audioContext.createMediaElementSource(video);
+                dest = audioContext.createMediaStreamDestination();
+                source.connect(dest);
+
+                updateProgress(60, 'Converting audio format...');
+
+                let mimeType = formatMappings.audio.mimeTypes[outputFormat];
+
+                // Guard against unsupported mime types and provide a fallback
+                if (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function') {
+                    if (!mimeType || !MediaRecorder.isTypeSupported(mimeType)) {
+                        if (MediaRecorder.isTypeSupported('audio/ogg')) {
+                            mimeType = 'audio/ogg';
+                        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+                            mimeType = 'audio/webm';
+                        } else {
+                            mimeType = null; // Let the browser choose a default
+                        }
+                    }
+                }
+
+                const recorderOptions = {
+                    audioBitsPerSecond: parseInt(document.getElementById('audioBitrate').value) * 1000
+                };
+                if (mimeType) {
+                    recorderOptions.mimeType = mimeType;
+                }
+
+                const recorder = new MediaRecorder(dest.stream, recorderOptions);
+                const chunks = [];
+                recorder.ondataavailable = (e) => chunks.push(e.data);
+
+                return await new Promise((resolve, reject) => {
+                    recorder.onstop = () => {
+                        convertedBlob = new Blob(chunks, { type: mimeType || 'audio/webm' });
+                        updateProgress(100, 'Conversion complete!');
+                        showResult(outputFormat);
+                        resolve();
+                    };
+
+                    recorder.onerror = () => reject(new Error('Recording failed'));
+
+                    recorder.start();
+
+                    const playPromise = video.play();
+                    if (playPromise !== undefined) {
+                        playPromise.then(() => {
+                            updateProgress(80, 'Recording audio...');
+                        }).catch(() => {
+                            try { recorder.stop(); } catch (e) { /* ignore */ }
+                            reject(new Error('Failed to play video'));
+                        });
+                    } else {
+                        updateProgress(80, 'Recording audio...');
+                    }
+
+                    video.onended = () => {
+                        setTimeout(() => recorder.stop(), 500);
+                    };
+                });
+            } finally {
+                try {
+                    if (source) source.disconnect();
+                    if (audioContext) await audioContext.close();
+                } catch (e) {
+                    // Ignore cleanup errors
+                }
+                URL.revokeObjectURL(objectUrl);
+            }
+        }
+
         async function convertAudio(file, outputFormat) {
             updateProgress(20, 'Loading audio...');
 
@@ -717,6 +850,109 @@
 
             updateProgress(100, 'Conversion complete!');
             showResult(outputFormat);
+        }
+
+        async function convertAudioToVideo(file, outputFormat) {
+            updateProgress(20, 'Loading audio...');
+
+            let audioContext = null;
+            let source = null;
+            let dest = null;
+            let stream = null;
+
+            try {
+                audioContext = new AudioContext();
+                const arrayBuffer = await file.arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+
+                updateProgress(40, 'Creating video canvas...');
+
+                // Create a canvas with a visualization or static image
+                const canvas = document.createElement('canvas');
+                canvas.width = 1280;
+                canvas.height = 720;
+                const ctx = canvas.getContext('2d');
+
+                // Create a simple gradient background
+                const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+                gradient.addColorStop(0, '#667eea');
+                gradient.addColorStop(1, '#764ba2');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+                // Add audio waveform visualization text
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 48px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('🎵 Audio', canvas.width / 2, canvas.height / 2 - 40);
+
+                const baseName = originalFileName.substring(0, originalFileName.lastIndexOf('.')) || originalFileName;
+                ctx.font = '32px Arial';
+                ctx.fillText(baseName, canvas.width / 2, canvas.height / 2 + 40);
+
+                updateProgress(60, 'Combining audio and video...');
+
+                stream = canvas.captureStream(1); // 1 FPS for static image
+
+                // Add audio to the stream
+                source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                dest = audioContext.createMediaStreamDestination();
+                source.connect(dest);
+                stream.addTrack(dest.stream.getAudioTracks()[0]);
+
+                let mimeType = formatMappings.video.mimeTypes[outputFormat];
+
+                // Guard against unsupported mime types (e.g., video/mp4) and provide a fallback
+                const recorderOptions = {
+                    videoBitsPerSecond: parseInt(document.getElementById('videoBitrate').value) * 1000,
+                    audioBitsPerSecond: parseInt(document.getElementById('audioBitrate').value) * 1000
+                };
+                if (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function') {
+                    if (mimeType && MediaRecorder.isTypeSupported(mimeType)) {
+                        recorderOptions.mimeType = mimeType;
+                    } else if (MediaRecorder.isTypeSupported('video/webm')) {
+                        mimeType = 'video/webm';
+                        recorderOptions.mimeType = mimeType;
+                    }
+                    // If neither is supported, omit mimeType and let the browser choose a default
+                }
+
+                const recorder = new MediaRecorder(stream, recorderOptions);
+                const chunks = [];
+                recorder.ondataavailable = (e) => chunks.push(e.data);
+
+                return await new Promise((resolve, reject) => {
+                    recorder.onstop = () => {
+                        convertedBlob = new Blob(chunks, { type: mimeType || 'video/webm' });
+                        updateProgress(100, 'Conversion complete!');
+                        showResult(outputFormat);
+                        resolve();
+                    };
+
+                    recorder.onerror = () => reject(new Error('Recording failed'));
+
+                    updateProgress(80, 'Recording video...');
+
+                    recorder.start();
+                    source.start();
+
+                    source.onended = () => {
+                        setTimeout(() => recorder.stop(), 500);
+                    };
+                });
+            } finally {
+                try {
+                    if (source) source.disconnect();
+                    if (audioContext) await audioContext.close();
+                } catch (e) {
+                    // Ignore cleanup errors
+                }
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
+            }
         }
 
         async function convertAudioWithRecorder(audioBuffer, format, audioContext) {
