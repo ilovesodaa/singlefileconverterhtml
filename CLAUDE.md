@@ -5,8 +5,9 @@ A single-file HTML media and text converter powered by FFmpeg.wasm. The entire a
 
 ## Architecture
 - **One file**: `converter.html` contains all HTML, CSS, and JavaScript
-- **FFmpeg.wasm v0.11.6**: Loaded via `<script src>` from jsdelivr CDN (classic script tag, NOT ES modules)
-- **FFmpeg core v0.11.0**: WASM binary loaded at runtime from CDN
+- **FFmpeg.wasm v0.12.15**: Loaded via `<script src>` UMD builds from jsdelivr CDN (classic script tags, NOT ES modules)
+- **FFmpeg util v0.12.2**: Provides `toBlobURL` and `fetchFile` helpers (UMD build)
+- **FFmpeg core v0.12.10**: WASM binary fetched from CDN and converted to blob URL via `toBlobURL`
 - **No HTTP server needed**: Must work when opened directly as a `file://` in the browser
 
 ## Key Constraints
@@ -14,18 +15,27 @@ A single-file HTML media and text converter powered by FFmpeg.wasm. The entire a
 - **No ES modules** — `<script type="module">` and `import` statements break `file://` protocol. Use classic `<script>` tags only
 - **No build tools** — no npm, webpack, vite, etc.
 - **CDN dependencies only** — external libs loaded via `<script src="https://cdn.jsdelivr.net/...">`
+- **WASM loaded as blob URL** — `toBlobURL` fetches the WASM binary from CDN and converts it to a blob URL for `file://` compatibility
 - **Text conversions don't use FFmpeg** — they use plain JS string manipulation
 
-## FFmpeg.wasm API (v0.11.6)
-This project uses the v0.11.x API, NOT v0.12.x:
+## FFmpeg.wasm API (v0.12.x UMD)
+This project uses v0.12.x UMD builds. Globals: `FFmpegWASM` and `FFmpegUtil`.
 ```js
-const { createFFmpeg, fetchFile } = FFmpeg;   // Global FFmpeg object from CDN script
-const ffmpeg = createFFmpeg({ corePath: '...', progress: ({ ratio }) => {} });
-await ffmpeg.load();
-ffmpeg.FS('writeFile', name, await fetchFile(file));  // Write to virtual FS
-await ffmpeg.run('-i', 'input.mp4', 'output.webm');   // Run conversion
-const data = ffmpeg.FS('readFile', 'output.webm');     // Read from virtual FS
-ffmpeg.FS('unlink', name);                             // Cleanup virtual FS
+// Load via UMD script tags (NOT ES modules)
+// <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/umd/ffmpeg.js"></script>
+// <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/umd/index.js"></script>
+
+var ffmpeg = new FFmpegWASM.FFmpeg();
+var baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+await ffmpeg.load({
+    coreURL: await FFmpegUtil.toBlobURL(baseURL + '/ffmpeg-core.js', 'text/javascript'),
+    wasmURL: await FFmpegUtil.toBlobURL(baseURL + '/ffmpeg-core.wasm', 'application/wasm'),
+});
+await ffmpeg.writeFile('input.mp4', await FFmpegUtil.fetchFile(file));
+await ffmpeg.exec(['-i', 'input.mp4', 'output.webm']);
+var data = await ffmpeg.readFile('output.webm');
+await ffmpeg.deleteFile('input.mp4');
+await ffmpeg.deleteFile('output.webm');
 ```
 
 ## Conversion Types
@@ -37,4 +47,4 @@ ffmpeg.FS('unlink', name);                             // Cleanup virtual FS
 - **Text**: Pure JS (CSV/JSON/HTML/TXT/Base64) — no FFmpeg involved
 
 ## Shared Helper
-`runFFmpegConversion(file, outputFormat, buildArgs, mimeType)` handles the full lifecycle: init check, writeFile, run, readFile, cleanup, progress, error handling. Each conversion function is a thin wrapper that builds FFmpeg args.
+`runFFmpegConversion(file, outputFormat, buildArgs, mimeType)` handles the full lifecycle: init check, writeFile, exec, readFile, cleanup, progress, error handling. Each conversion function is a thin wrapper that builds FFmpeg args.

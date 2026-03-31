@@ -488,13 +488,14 @@
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.15/dist/umd/ffmpeg.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.2/dist/umd/index.js"></script>
     <script>
-        let currentFile = null;
-        let convertedBlob = null;
-        let originalFileName = '';
-        let ffmpeg = null;
-        let ffmpegLoaded = false;
+        var currentFile = null;
+        var convertedBlob = null;
+        var originalFileName = '';
+        var ffmpeg = null;
+        var ffmpegLoaded = false;
 
         // File format mappings
         const formatMappings = {
@@ -554,18 +555,12 @@
         async function initFFmpeg() {
             if (ffmpegLoaded) return;
             try {
-                const { createFFmpeg } = FFmpeg;
-                ffmpeg = createFFmpeg({
-                    log: false,
-                    corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js',
-                    progress: ({ ratio }) => {
-                        if (ratio >= 0 && ratio <= 1) {
-                            const percent = Math.max(10, Math.min(95, Math.round(ratio * 100)));
-                            updateProgress(percent, 'Converting... ' + percent + '%');
-                        }
-                    }
+                ffmpeg = new FFmpegWASM.FFmpeg();
+                var baseURL = 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.10/dist/umd';
+                await ffmpeg.load({
+                    coreURL: await FFmpegUtil.toBlobURL(baseURL + '/ffmpeg-core.js', 'text/javascript'),
+                    wasmURL: await FFmpegUtil.toBlobURL(baseURL + '/ffmpeg-core.wasm', 'application/wasm'),
                 });
-                await ffmpeg.load();
                 ffmpegLoaded = true;
                 document.getElementById('ffmpegLoading').style.display = 'none';
                 document.getElementById('ffmpegReady').style.display = 'block';
@@ -587,37 +582,43 @@
                 if (!ffmpegLoaded) throw new Error('FFmpeg failed to load. Check your internet connection.');
             }
 
-            const inputExt = getFileExtension(file.name);
-            const inputName = 'input.' + inputExt;
-            const outputName = 'output.' + outputFormat;
+            var inputExt = getFileExtension(file.name);
+            var inputName = 'input.' + inputExt;
+            var outputName = 'output.' + outputFormat;
 
             updateProgress(10, 'Writing file to FFmpeg...');
-            ffmpeg.FS('writeFile', inputName, await FFmpeg.fetchFile(file));
+            await ffmpeg.writeFile(inputName, await FFmpegUtil.fetchFile(file));
+
+            // Register progress handler
+            ffmpeg.on('progress', function(ev) {
+                var percent = Math.max(10, Math.min(95, Math.round(ev.progress * 100)));
+                updateProgress(percent, 'Converting... ' + percent + '%');
+            });
 
             updateProgress(15, 'Converting...');
-            const args = buildArgs(inputName, outputName);
-            await ffmpeg.run.apply(ffmpeg, args);
+            var args = buildArgs(inputName, outputName);
+            await ffmpeg.exec(args);
 
             updateProgress(95, 'Reading output...');
-            let data;
+            var data;
             try {
-                data = ffmpeg.FS('readFile', outputName);
+                data = await ffmpeg.readFile(outputName);
             } catch (e) {
-                try { ffmpeg.FS('unlink', inputName); } catch {}
+                try { await ffmpeg.deleteFile(inputName); } catch (x) {}
                 throw new Error('Conversion produced no output. The format combination may not be supported.');
             }
 
             if (!data || data.length === 0) {
-                try { ffmpeg.FS('unlink', inputName); } catch {}
-                try { ffmpeg.FS('unlink', outputName); } catch {}
+                try { await ffmpeg.deleteFile(inputName); } catch (x) {}
+                try { await ffmpeg.deleteFile(outputName); } catch (x) {}
                 throw new Error('Conversion produced no output. Try a different format.');
             }
 
             convertedBlob = new Blob([data.buffer], { type: mimeType });
 
             // Cleanup virtual filesystem
-            try { ffmpeg.FS('unlink', inputName); } catch {}
-            try { ffmpeg.FS('unlink', outputName); } catch {}
+            try { await ffmpeg.deleteFile(inputName); } catch (x) {}
+            try { await ffmpeg.deleteFile(outputName); } catch (x) {}
 
             updateProgress(100, 'Conversion complete!');
             showResult(outputFormat);
