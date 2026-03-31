@@ -400,7 +400,7 @@
                         • MP4 ↔ WebM<br>
                         • AVI → MP4/WebM<br>
                         • MOV → MP4/WebM<br>
-                        • Extract audio to MP3/WAV/OGG<br>
+                        • Extract audio (browser-supported formats)<br>
                         • Browser-supported codecs
                     </div>
                 </div>
@@ -411,7 +411,7 @@
                         • AAC → MP3/WAV<br>
                         • FLAC → WAV<br>
                         • Create video with visualization<br>
-                        • WebM audio extract
+                        • Browser-supported audio extract
                     </div>
                 </div>
                 <div class="format-card">
@@ -630,7 +630,6 @@
 
             const fileExt = getFileExtension(originalFileName);
             const fileType = detectFileType(fileExt);
-            const outputType = detectFileType(outputFormat);
 
             // Show progress
             showProgress();
@@ -743,57 +742,92 @@
         async function convertVideoToAudio(file, outputFormat) {
             updateProgress(20, 'Loading video...');
 
+            const objectUrl = URL.createObjectURL(file);
             const video = document.createElement('video');
-            video.src = URL.createObjectURL(file);
+            video.src = objectUrl;
 
-            await new Promise((resolve, reject) => {
-                video.onloadedmetadata = resolve;
-                video.onerror = () => reject(new Error('Failed to load video'));
-            });
+            let audioContext = null;
+            let source = null;
+            let dest = null;
 
-            updateProgress(40, 'Extracting audio...');
+            try {
+                await new Promise((resolve, reject) => {
+                    video.onloadedmetadata = resolve;
+                    video.onerror = () => reject(new Error('Failed to load video'));
+                });
 
-            // Check if video has audio
-            if (!video.mozHasAudio && !video.webkitAudioDecodedByteCount && !video.audioTracks?.length) {
-                throw new Error('Video file does not contain audio');
+                updateProgress(40, 'Extracting audio...');
+
+                audioContext = new AudioContext();
+                source = audioContext.createMediaElementSource(video);
+                dest = audioContext.createMediaStreamDestination();
+                source.connect(dest);
+
+                updateProgress(60, 'Converting audio format...');
+
+                let mimeType = formatMappings.audio.mimeTypes[outputFormat];
+
+                // Guard against unsupported mime types and provide a fallback
+                if (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function') {
+                    if (!mimeType || !MediaRecorder.isTypeSupported(mimeType)) {
+                        if (MediaRecorder.isTypeSupported('audio/ogg')) {
+                            mimeType = 'audio/ogg';
+                        } else if (MediaRecorder.isTypeSupported('audio/webm')) {
+                            mimeType = 'audio/webm';
+                        } else {
+                            mimeType = null; // Let the browser choose a default
+                        }
+                    }
+                }
+
+                const recorderOptions = {
+                    audioBitsPerSecond: parseInt(document.getElementById('audioBitrate').value) * 1000
+                };
+                if (mimeType) {
+                    recorderOptions.mimeType = mimeType;
+                }
+
+                const recorder = new MediaRecorder(dest.stream, recorderOptions);
+                const chunks = [];
+                recorder.ondataavailable = (e) => chunks.push(e.data);
+
+                return await new Promise((resolve, reject) => {
+                    recorder.onstop = () => {
+                        convertedBlob = new Blob(chunks, { type: mimeType || 'audio/webm' });
+                        updateProgress(100, 'Conversion complete!');
+                        showResult(outputFormat);
+                        resolve();
+                    };
+
+                    recorder.onerror = () => reject(new Error('Recording failed'));
+
+                    recorder.start();
+
+                    const playPromise = video.play();
+                    if (playPromise !== undefined) {
+                        playPromise.then(() => {
+                            updateProgress(80, 'Recording audio...');
+                        }).catch(() => {
+                            try { recorder.stop(); } catch (e) { /* ignore */ }
+                            reject(new Error('Failed to play video'));
+                        });
+                    } else {
+                        updateProgress(80, 'Recording audio...');
+                    }
+
+                    video.onended = () => {
+                        setTimeout(() => recorder.stop(), 500);
+                    };
+                });
+            } finally {
+                try {
+                    if (source) source.disconnect();
+                    if (audioContext) await audioContext.close();
+                } catch (e) {
+                    // Ignore cleanup errors
+                }
+                URL.revokeObjectURL(objectUrl);
             }
-
-            const audioContext = new AudioContext();
-            const source = audioContext.createMediaElementSource(video);
-            const dest = audioContext.createMediaStreamDestination();
-            source.connect(dest);
-
-            updateProgress(60, 'Converting audio format...');
-
-            const mimeType = formatMappings.audio.mimeTypes[outputFormat];
-            const recorder = new MediaRecorder(dest.stream, {
-                mimeType: mimeType,
-                audioBitsPerSecond: parseInt(document.getElementById('audioBitrate').value) * 1000
-            });
-
-            const chunks = [];
-            recorder.ondataavailable = (e) => chunks.push(e.data);
-
-            return new Promise((resolve, reject) => {
-                recorder.onstop = () => {
-                    convertedBlob = new Blob(chunks, { type: mimeType });
-                    updateProgress(100, 'Conversion complete!');
-                    showResult(outputFormat);
-                    URL.revokeObjectURL(video.src);
-                    resolve();
-                };
-
-                recorder.onerror = (e) => reject(new Error('Recording failed'));
-
-                recorder.start();
-                video.play();
-
-                updateProgress(80, 'Recording audio...');
-
-                video.onended = () => {
-                    setTimeout(() => recorder.stop(), 500);
-                };
-            });
         }
 
         async function convertAudio(file, outputFormat) {
@@ -821,75 +855,104 @@
         async function convertAudioToVideo(file, outputFormat) {
             updateProgress(20, 'Loading audio...');
 
-            const audioContext = new AudioContext();
-            const arrayBuffer = await file.arrayBuffer();
-            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            let audioContext = null;
+            let source = null;
+            let dest = null;
+            let stream = null;
 
-            updateProgress(40, 'Creating video canvas...');
+            try {
+                audioContext = new AudioContext();
+                const arrayBuffer = await file.arrayBuffer();
+                const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
-            // Create a canvas with a visualization or static image
-            const canvas = document.createElement('canvas');
-            canvas.width = 1280;
-            canvas.height = 720;
-            const ctx = canvas.getContext('2d');
+                updateProgress(40, 'Creating video canvas...');
 
-            // Create a simple gradient background
-            const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-            gradient.addColorStop(0, '#667eea');
-            gradient.addColorStop(1, '#764ba2');
-            ctx.fillStyle = gradient;
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                // Create a canvas with a visualization or static image
+                const canvas = document.createElement('canvas');
+                canvas.width = 1280;
+                canvas.height = 720;
+                const ctx = canvas.getContext('2d');
 
-            // Add audio waveform visualization text
-            ctx.fillStyle = 'white';
-            ctx.font = 'bold 48px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText('🎵 Audio', canvas.width / 2, canvas.height / 2 - 40);
+                // Create a simple gradient background
+                const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+                gradient.addColorStop(0, '#667eea');
+                gradient.addColorStop(1, '#764ba2');
+                ctx.fillStyle = gradient;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-            const baseName = originalFileName.substring(0, originalFileName.lastIndexOf('.')) || originalFileName;
-            ctx.font = '32px Arial';
-            ctx.fillText(baseName, canvas.width / 2, canvas.height / 2 + 40);
+                // Add audio waveform visualization text
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 48px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('🎵 Audio', canvas.width / 2, canvas.height / 2 - 40);
 
-            updateProgress(60, 'Combining audio and video...');
+                const baseName = originalFileName.substring(0, originalFileName.lastIndexOf('.')) || originalFileName;
+                ctx.font = '32px Arial';
+                ctx.fillText(baseName, canvas.width / 2, canvas.height / 2 + 40);
 
-            const stream = canvas.captureStream(1); // 1 FPS for static image
+                updateProgress(60, 'Combining audio and video...');
 
-            // Add audio to the stream
-            const source = audioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            const dest = audioContext.createMediaStreamDestination();
-            source.connect(dest);
-            stream.addTrack(dest.stream.getAudioTracks()[0]);
+                stream = canvas.captureStream(1); // 1 FPS for static image
 
-            const mimeType = formatMappings.video.mimeTypes[outputFormat];
-            const recorder = new MediaRecorder(stream, {
-                mimeType: mimeType,
-                videoBitsPerSecond: parseInt(document.getElementById('videoBitrate').value) * 1000,
-                audioBitsPerSecond: parseInt(document.getElementById('audioBitrate').value) * 1000
-            });
+                // Add audio to the stream
+                source = audioContext.createBufferSource();
+                source.buffer = audioBuffer;
+                dest = audioContext.createMediaStreamDestination();
+                source.connect(dest);
+                stream.addTrack(dest.stream.getAudioTracks()[0]);
 
-            const chunks = [];
-            recorder.ondataavailable = (e) => chunks.push(e.data);
+                let mimeType = formatMappings.video.mimeTypes[outputFormat];
 
-            return new Promise((resolve) => {
-                recorder.onstop = () => {
-                    convertedBlob = new Blob(chunks, { type: mimeType });
-                    updateProgress(100, 'Conversion complete!');
-                    showResult(outputFormat);
-                    resolve();
+                // Guard against unsupported mime types (e.g., video/mp4) and provide a fallback
+                const recorderOptions = {
+                    videoBitsPerSecond: parseInt(document.getElementById('videoBitrate').value) * 1000,
+                    audioBitsPerSecond: parseInt(document.getElementById('audioBitrate').value) * 1000
                 };
+                if (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function') {
+                    if (mimeType && MediaRecorder.isTypeSupported(mimeType)) {
+                        recorderOptions.mimeType = mimeType;
+                    } else if (MediaRecorder.isTypeSupported('video/webm')) {
+                        mimeType = 'video/webm';
+                        recorderOptions.mimeType = mimeType;
+                    }
+                    // If neither is supported, omit mimeType and let the browser choose a default
+                }
 
-                updateProgress(80, 'Recording video...');
+                const recorder = new MediaRecorder(stream, recorderOptions);
+                const chunks = [];
+                recorder.ondataavailable = (e) => chunks.push(e.data);
 
-                recorder.start();
-                source.start();
+                return await new Promise((resolve, reject) => {
+                    recorder.onstop = () => {
+                        convertedBlob = new Blob(chunks, { type: mimeType || 'video/webm' });
+                        updateProgress(100, 'Conversion complete!');
+                        showResult(outputFormat);
+                        resolve();
+                    };
 
-                setTimeout(() => {
-                    recorder.stop();
-                    source.stop();
-                }, audioBuffer.duration * 1000 + 500);
-            });
+                    recorder.onerror = () => reject(new Error('Recording failed'));
+
+                    updateProgress(80, 'Recording video...');
+
+                    recorder.start();
+                    source.start();
+
+                    source.onended = () => {
+                        setTimeout(() => recorder.stop(), 500);
+                    };
+                });
+            } finally {
+                try {
+                    if (source) source.disconnect();
+                    if (audioContext) await audioContext.close();
+                } catch (e) {
+                    // Ignore cleanup errors
+                }
+                if (stream) {
+                    stream.getTracks().forEach(track => track.stop());
+                }
+            }
         }
 
         async function convertAudioWithRecorder(audioBuffer, format, audioContext) {

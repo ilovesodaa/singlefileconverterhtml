@@ -27,15 +27,15 @@ A powerful, 100% offline HTML file converter that works without an internet conn
 
 ### 🎥 Video Conversion
 - **Supported Inputs:** MP4, WebM, AVI, MOV, MKV, FLV, WMV, OGV
-- **Output Formats:** MP4, WebM
-- **Audio Extraction:** MP3, WAV, OGG (extract audio from video)
-- **Features:** Adjustable video/audio bitrate, preserves quality
+- **Output Formats:** MP4, WebM (MP4 may only be available in some browsers)
+- **Audio Extraction:** Extract audio in browser-supported formats (typically WebM/OGG; exact formats depend on your browser)
+- **Features:** Adjustable video/audio bitrate; output quality depends on browser encoding support
 
 ### 🎵 Audio Conversion
 - **Supported Inputs:** MP3, WAV, OGG, AAC, FLAC, M4A, WMA, OPUS
 - **Output Formats:** MP3, WAV, OGG
-- **Video Creation:** MP4, WebM (create video with visualization)
-- **Features:** Bitrate control, high-quality conversion
+- **Video Creation:** Create video (typically WebM; MP4 may only be available in some browsers) with visualization
+- **Features:** Bitrate control; output quality depends on browser encoding support
 
 ### 🖼️ Image Conversion
 - **Supported Inputs:** PNG, JPG, JPEG, GIF, BMP, WebP, SVG, ICO
@@ -81,9 +81,9 @@ All processing happens in your browser's memory - nothing is uploaded or sent an
 - Processing may take time for large videos
 
 ### Audio Extraction from Video
-- Extract high-quality audio tracks from video files
-- Choose from MP3, WAV, or OGG formats
-- Preserves original audio quality based on bitrate setting
+- Extract audio tracks from video files
+- Choose from MP3, WAV, or OGG formats (actual output format depends on browser codec support; typically WebM/OGG)
+- Re-encodes audio at the selected bitrate; output quality depends on the source and browser codec support
 
 ### Audio to Video Conversion
 - Converts audio files into video format with a visual background
